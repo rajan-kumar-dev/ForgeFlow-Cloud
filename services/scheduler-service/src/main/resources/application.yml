@@ -1,0 +1,18 @@
+server:
+  port: ${SERVER_PORT:8083}
+spring:
+  application:
+    name: scheduler-service
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+app:
+  job-service-url: ${JOB_SERVICE_URL:http://localhost:8081}
+  internal-token: ${FORGEFLOW_INTERNAL_TOKEN:dev-internal-token}
+  interval-ms: ${SCHEDULER_INTERVAL_MS:2000}

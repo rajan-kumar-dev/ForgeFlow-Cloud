@@ -1,0 +1,7 @@
+.git
+.env*
+**/node_modules
+**/dist
+**/target
+**/.DS_Store
+data/reports/*

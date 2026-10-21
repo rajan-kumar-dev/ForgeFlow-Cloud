@@ -1,0 +1,16 @@
+{
+  "info": {
+    "name": "ForgeFlow Cloud (Local Dev)",
+    "description": "Requests for the local ForgeFlow API. Local dev mode is unauthenticated only when FORGEFLOW_SECURITY_ENABLED=false.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{"key":"baseUrl","value":"http://localhost:8080"},{"key":"jobId","value":"REPLACE_WITH_JOB_ID"}],
+  "item": [
+    {"name":"Create sample report job","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"},{"key":"Idempotency-Key","value":"postman-report-demo-1"}],"body":{"mode":"raw","raw":"{\n  \"type\": \"GENERATE_REPORT\",\n  \"payload\": {\"reportType\": \"SALES_SUMMARY\", \"lookbackDays\": 30, \"dataLabel\": \"SAMPLE DATA ONLY\"},\n  \"priority\": \"NORMAL\",\n  \"scheduleMode\": \"NOW\",\n  \"maxAttempts\": 3,\n  \"idempotencyKey\": \"postman-report-demo-1\"\n}"},"url":{"raw":"{{baseUrl}}/api/jobs","host":["{{baseUrl}}"],"path":["api","jobs"]}}},
+    {"name":"List my jobs","request":{"method":"GET","url":{"raw":"{{baseUrl}}/api/jobs","host":["{{baseUrl}}"],"path":["api","jobs"]}}},
+    {"name":"Get job status","request":{"method":"GET","url":{"raw":"{{baseUrl}}/api/jobs/{{jobId}}","host":["{{baseUrl}}"],"path":["api","jobs","{{jobId}}"]}}},
+    {"name":"List job attempts","request":{"method":"GET","url":{"raw":"{{baseUrl}}/api/jobs/{{jobId}}/attempts","host":["{{baseUrl}}"],"path":["api","jobs","{{jobId}}","attempts"]}}},
+    {"name":"Get dashboard summary","request":{"method":"GET","url":{"raw":"{{baseUrl}}/api/dashboard/summary","host":["{{baseUrl}}"],"path":["api","dashboard","summary"]}}},
+    {"name":"Create Failure Lab job","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\n  \"type\": \"SIMULATE_FAILURE\",\n  \"payload\": {\"failFirstAttempts\": 2},\n  \"priority\": \"NORMAL\",\n  \"scheduleMode\": \"NOW\",\n  \"maxAttempts\": 3\n}"},"url":{"raw":"{{baseUrl}}/api/jobs","host":["{{baseUrl}}"],"path":["api","jobs"]}}}
+  ]
+}

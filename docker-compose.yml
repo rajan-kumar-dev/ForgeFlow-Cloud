@@ -1,0 +1,171 @@
+
+name: forgeflow-cloud
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: forgeflow
+      POSTGRES_USER: forgeflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeflow -d forgeflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-forgeflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  job-service:
+    build:
+      context: .
+      dockerfile: services/job-service/Dockerfile
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/forgeflow
+      SPRING_DATASOURCE_USERNAME: forgeflow
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-forgeflow_dev}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-forgeflow}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-forgeflow_dev}
+      FORGEFLOW_INTERNAL_TOKEN: ${FORGEFLOW_INTERNAL_TOKEN:?FORGEFLOW_INTERNAL_TOKEN must be set}
+      FORGEFLOW_SECURITY_ENABLED: "true"
+      CLERK_ISSUER_URI: ${CLERK_ISSUER_URI:?CLERK_ISSUER_URI must be set}
+      FORGEFLOW_REPORTS_DIR: /data/reports
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - reports_data:/data/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker-service:
+    build:
+      context: .
+      dockerfile: services/worker-service/Dockerfile
+    environment:
+      SERVER_PORT: 8082
+      JOB_SERVICE_URL: http://job-service:8081
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-forgeflow}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-forgeflow_dev}
+      FORGEFLOW_INTERNAL_TOKEN: ${FORGEFLOW_INTERNAL_TOKEN:?FORGEFLOW_INTERNAL_TOKEN must be set}
+      FORGEFLOW_REPORTS_DIR: /data/reports
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    volumes:
+      - reports_data:/data/reports
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      job-service:
+        condition: service_started
+    restart: unless-stopped
+
+  scheduler-service:
+    build:
+      context: .
+      dockerfile: services/scheduler-service/Dockerfile
+    environment:
+      SERVER_PORT: 8083
+      JOB_SERVICE_URL: http://job-service:8081
+      FORGEFLOW_INTERNAL_TOKEN: ${FORGEFLOW_INTERNAL_TOKEN:?FORGEFLOW_INTERNAL_TOKEN must be set}
+      SCHEDULER_INTERVAL_MS: 2000
+    ports:
+      - "127.0.0.1:8083:8083"
+    depends_on:
+      job-service:
+        condition: service_started
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      JOB_SERVICE_URL: http://job-service:8081
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      job-service:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      api-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - job-service
+      - worker-service
+      - scheduler-service
+      - api-gateway
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+  reports_data:

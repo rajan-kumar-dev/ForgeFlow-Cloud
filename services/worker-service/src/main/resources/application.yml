@@ -1,0 +1,29 @@
+server:
+  port: ${SERVER_PORT:8082}
+spring:
+  application:
+    name: worker-service
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:forgeflow}
+    password: ${SPRING_RABBITMQ_PASSWORD:forgeflow_dev}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 1
+        concurrency: ${WORKER_CONCURRENCY:2}
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+app:
+  job-service-url: ${JOB_SERVICE_URL:http://localhost:8081}
+  internal-token: ${FORGEFLOW_INTERNAL_TOKEN}
+  reports-dir: ${FORGEFLOW_REPORTS_DIR:/data/reports}
+  heartbeat-ms: ${WORKER_HEARTBEAT_MS:5000}

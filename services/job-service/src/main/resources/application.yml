@@ -1,0 +1,47 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: job-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/forgeflow}
+    username: ${SPRING_DATASOURCE_USERNAME:forgeflow}
+    password: ${SPRING_DATASOURCE_PASSWORD:forgeflow_dev}
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:forgeflow}
+    password: ${SPRING_RABBITMQ_PASSWORD:forgeflow_dev}
+    publisher-confirm-type: correlated
+    template:
+      mandatory: true
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+
+forgeflow:
+  security:
+    enabled: ${FORGEFLOW_SECURITY_ENABLED:false}
+  internal-token: ${FORGEFLOW_INTERNAL_TOKEN:dev-internal-token}
+  storage:
+    reports-dir: ${FORGEFLOW_REPORTS_DIR:/data/reports}
+  outbox-poll-ms: ${FORGEFLOW_OUTBOX_POLL_MS:500}

@@ -1,0 +1,3 @@
+package com.forgeflow.workerservice.service;
+import com.forgeflow.workerservice.api.JobApiClient; import org.slf4j.*; import org.springframework.scheduling.annotation.Scheduled; import org.springframework.stereotype.Component;
+@Component public class WorkerHeartbeat {private static final Logger log=LoggerFactory.getLogger(WorkerHeartbeat.class);private final JobConsumer consumer;private final JobApiClient api;public WorkerHeartbeat(JobConsumer c,JobApiClient a){consumer=c;api=a;}@Scheduled(fixedDelayString="${app.heartbeat-ms:5000}") public void heartbeat(){try{api.heartbeat(consumer.workerId(),consumer.activeJobs());}catch(Exception ex){log.debug("Worker heartbeat failed: {}",ex.getMessage());}}}
