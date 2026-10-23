@@ -20,6 +20,7 @@ import {
   X,
   LoaderCircle,
   RefreshCw,
+  Rss,
   ShieldCheck,
   Workflow,
 } from 'lucide-react'
@@ -212,7 +213,10 @@ function Dashboard({ getToken, onSignOut, localPreview = false }: { getToken?: (
   const [summary, setSummary] = useState<Record<string, number>>({})
   const [workers, setWorkers] = useState<Worker[]>([])
   const [tab, setTab] = useState<'overview' | 'jobs' | 'create' | 'workers' | 'failure'>('overview')
-  const [jobType, setJobType] = useState<'GENERATE_REPORT' | 'SIMULATE_FAILURE'>('GENERATE_REPORT')
+  const [jobType, setJobType] = useState<
+    'GENERATE_REPORT' | 'SIMULATE_FAILURE' | 'FETCH_RSS_FEED'
+  >('GENERATE_REPORT')
+  const [feedUrl, setFeedUrl] = useState('https://www.nasa.gov/feed/')
   const [priority, setPriority] = useState('NORMAL')
   const [lookbackDays, setLookbackDays] = useState(30)
   const [failFirstAttempts, setFailFirstAttempts] = useState(2)
@@ -266,7 +270,17 @@ function Dashboard({ getToken, onSignOut, localPreview = false }: { getToken?: (
   const createJob = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setNotice(''); setApiError('')
     try {
-      const payload = jobType === 'GENERATE_REPORT' ? { reportType: 'SALES_SUMMARY', lookbackDays, format: 'CSV', dataLabel: 'SAMPLE DATA ONLY' } : { failFirstAttempts }
+      const payload =
+        jobType === 'GENERATE_REPORT'
+          ? {
+              reportType: 'SALES_SUMMARY',
+              lookbackDays,
+              format: 'CSV',
+              dataLabel: 'SAMPLE DATA ONLY',
+            }
+          : jobType === 'SIMULATE_FAILURE'
+            ? { failFirstAttempts }
+            : { feedUrl }
       const requestKey = crypto.randomUUID()
       const created = await request<Job>('/jobs', { method: 'POST', headers: { 'Idempotency-Key': requestKey }, body: JSON.stringify({ type: jobType, payload, priority, scheduleMode, runAt: scheduleMode === 'LATER' && runAt ? new Date(runAt).toISOString() : null, maxAttempts, idempotencyKey: requestKey }) })
       setNotice(`Job ${created.id} was accepted with status ${created.status}.`); setTab('jobs'); await refresh()
@@ -275,7 +289,7 @@ function Dashboard({ getToken, onSignOut, localPreview = false }: { getToken?: (
   }
   const cancelJob = async (id: string) => { try { await request<Job>(`/jobs/${id}/cancel`, { method: 'POST' }); setNotice(`Cancellation requested for ${id}.`); await refresh() } catch (error) { setApiError(error instanceof Error ? error.message : 'Cancel failed') } }
   const retryJob = async (id: string) => { try { await request<Job>(`/admin/jobs/${id}/retry`, { method: 'POST' }); setNotice(`Manual retry queued for ${id}.`); await refresh() } catch (error) { setApiError(error instanceof Error ? error.message : 'Retry failed; admin access may be required.') } }
-  const downloadReport = async (job: Job) => { try { const token = getToken ? await getToken() : null; const headers = new Headers(); if(token)headers.set('Authorization',`Bearer ${token}`); const response=await fetch(apiUrl(`/jobs/${job.id}/result`),{headers}); if(!response.ok)throw new Error(`${response.status} ${response.statusText}`); const blob=await response.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a');a.href=url;a.download=job.result?.fileName||`${job.id}.csv`;a.click();URL.revokeObjectURL(url) } catch(error) {setApiError(error instanceof Error?error.message:'Download failed')} }
+  const downloadResult = async (job: Job) => { try { const token = getToken ? await getToken() : null; const headers = new Headers(); if(token)headers.set('Authorization',`Bearer ${token}`); const response=await fetch(apiUrl(`/jobs/${job.id}/result`),{headers}); if(!response.ok)throw new Error(`${response.status} ${response.statusText}`); const blob=await response.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a');a.href=url;a.download=job.result?.fileName||`${job.id}.csv`;a.click();URL.revokeObjectURL(url) } catch(error) {setApiError(error instanceof Error?error.message:'Download failed')} }
   const setTabSafe = (next: typeof tab) => { setTab(next); setNotice(''); if(next==='workers')void loadWorkers() }
   const filteredJobs = jobs.filter(j => (statusFilter==='ALL'||j.status===statusFilter) && `${j.id} ${j.type} ${j.status}`.toLowerCase().includes(query.toLowerCase()))
   const stat = (label:string, key:string, icon:typeof Layers3) => {const Icon=icon;return <article className="metric-card"><div className="metric-top"><span>{label}</span><Icon size={17}/></div><strong>{summary[key] ?? 0}</strong><small>Live job records</small></article>}
@@ -286,9 +300,57 @@ function Dashboard({ getToken, onSignOut, localPreview = false }: { getToken?: (
     <section className="dashboard-main"><header className="dashboard-header"><div><div className="eyebrow"><span className="eyebrow-dot"/> JOB ORCHESTRATION</div><h1>{tab==='overview'?'Control center':tab==='jobs'?'Job explorer':tab==='create'?'Create a job':tab==='workers'?'Workers & health':'Failure Lab'}</h1><p>{tab==='overview'?'Monitor background execution, retries and system activity.':tab==='jobs'?'Inspect job state, attempts and generated artifacts.':tab==='create'?'Submit a task and let ForgeFlow manage its lifecycle.':tab==='workers'?'Inspect worker heartbeats and privileged infrastructure health.':'Exercise automatic retries with a controlled test failure.'}</p></div><div className="header-actions">{localPreview&&<span className="dev-pill">LOCAL DEMO</span>}<button className="icon-action" onClick={()=>void refresh()} aria-label="Refresh"><RefreshCw size={16}/></button>{onSignOut&&<UserButton/>}</div></header>
       {apiError&&<div className="notice-banner error"><AlertTriangle size={17}/><div><strong>Backend connection or request issue</strong><span>{apiError}. Start the backend with <code>docker compose up --build</code> and check the service logs.</span></div><button onClick={()=>setApiError('')} aria-label="Dismiss"><X size={15}/></button></div>}
       {notice&&<div className="notice-banner success"><CircleCheck size={17}/><span>{notice}</span><button onClick={()=>setNotice('')} aria-label="Dismiss"><X size={15}/></button></div>}
-      {tab==='overview'&&<><div className="metrics-grid">{stat('Total jobs','total',Layers3)}{stat('Running','running',Activity)}{stat('Succeeded','succeeded',CircleCheck)}{stat('Dead / failed','dead',AlertTriangle)}</div><div className="content-grid"><section className="panel jobs-panel"><div className="panel-heading"><div><h2>Recent jobs</h2><p>Latest background work submitted to ForgeFlow</p></div><button className="text-button" onClick={()=>setTabSafe('jobs')}>View all <ArrowRight size={14}/></button></div><JobTable jobs={jobs.slice(0,6)} onDownload={downloadReport} onCancel={cancelJob} onRetry={retryJob}/></section><section className="panel quick-panel"><div className="panel-heading"><div><h2>Quick actions</h2><p>Launch a supported task type</p></div></div><button className="quick-action" onClick={()=>{setJobType('GENERATE_REPORT');setTabSafe('create')}}><span className="quick-icon"><Layers3 size={17}/></span><span><b>Generate report</b><small>Creates an illustrative sales CSV</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={()=>{setJobType('SIMULATE_FAILURE');setTabSafe('create')}}><span className="quick-icon"><RefreshCw size={17}/></span><span><b>Test automatic retries</b><small>Simulate transient failures</small></span><ArrowRight size={15}/></button><div className="info-callout"><ShieldCheck size={16}/><p>Reports are generated from labelled sample data in this starter. Connect a real business data source before using it for real reporting.</p></div></section></div></>}
-      {tab==='jobs'&&<section className="panel full-panel"><div className="panel-heading"><div><h2>All jobs</h2><p>Refreshes automatically every five seconds</p></div><button className="primary-small" onClick={()=>setTabSafe('create')}><Plus size={14}/> Create job</button></div><div className="table-toolbar"><div className="search-input"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search by ID, type or status"/></div><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="ALL">All statuses</option>{['QUEUED','RUNNING','RETRY_WAIT','SCHEDULED','SUCCEEDED','DEAD','CANCELLED'].map(s=><option key={s} value={s}>{s}</option>)}</select></div><JobTable jobs={filteredJobs} onDownload={downloadReport} onCancel={cancelJob} onRetry={retryJob}/></section>}
-      {tab==='create'&&<div className="form-layout"><section className="panel create-panel"><div className="panel-heading"><div><h2>Configure your job</h2><p>Select a supported handler and execution policy.</p></div></div><form onSubmit={createJob} className="create-job-form"><label>Job type<select value={jobType} onChange={e=>setJobType(e.target.value as typeof jobType)}><option value="GENERATE_REPORT">Generate sales report</option><option value="SIMULATE_FAILURE">Failure Lab — simulate transient errors</option></select></label>{jobType==='GENERATE_REPORT'?<label>Report period<select value={lookbackDays} onChange={e=>setLookbackDays(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label>:<label>Number of attempts to fail<input type="number" min={0} max={8} value={failFirstAttempts} onChange={e=>setFailFirstAttempts(Number(e.target.value))}/><small className="field-help">Set lower than max attempts to observe automatic recovery.</small></label>}<div className="two-fields"><label>Priority<select value={priority} onChange={e=>setPriority(e.target.value)}><option>LOW</option><option>NORMAL</option><option>HIGH</option></select></label><label>Maximum attempts<input type="number" min={1} max={10} value={maxAttempts} onChange={e=>setMaxAttempts(Number(e.target.value))}/></label></div><label>Schedule<select value={scheduleMode} onChange={e=>setScheduleMode(e.target.value)}><option value="NOW">Run as soon as possible</option><option value="LATER">Schedule for later</option></select></label>{scheduleMode==='LATER'&&<label>Run at<input type="datetime-local" value={runAt} onChange={e=>setRunAt(e.target.value)} required/></label>}<div className="form-note"><Clock3 size={16}/><span>ForgeFlow stores the job, publishes it to RabbitMQ, and executes it in a Java worker. Eligible failures are retried automatically.</span></div><button className="continue-button submit-job" type="submit" disabled={busy}>{busy?<><LoaderCircle size={16} className="spin"/> Submitting...</>:<>Submit job <ArrowRight size={15}/></>}</button></form></section><aside className="panel job-preview"><div className="panel-heading"><div><h2>Execution preview</h2><p>What ForgeFlow will do</p></div></div><div className="preview-step"><span>01</span><div><b>Persist job</b><small>Job Service writes the job record to PostgreSQL.</small></div></div><div className="preview-step"><span>02</span><div><b>Queue work</b><small>Outbox publisher sends the job ID through RabbitMQ.</small></div></div><div className="preview-step"><span>03</span><div><b>Execute and retry</b><small>Worker runs the handler and reports success or failure.</small></div></div><div className="preview-step"><span>04</span><div><b>Record outcome</b><small>Dashboard shows status, attempt history and report link.</small></div></div></aside></div>}
+      {tab==='overview'&&<><div className="metrics-grid">{stat('Total jobs','total',Layers3)}{stat('Running','running',Activity)}{stat('Succeeded','succeeded',CircleCheck)}{stat('Dead / failed','dead',AlertTriangle)}</div><div className="content-grid"><section className="panel jobs-panel"><div className="panel-heading"><div><h2>Recent jobs</h2><p>Latest background work submitted to ForgeFlow</p></div><button className="text-button" onClick={()=>setTabSafe('jobs')}>View all <ArrowRight size={14}/></button></div><JobTable jobs={jobs.slice(0,6)} onDownload={downloadResult} onCancel={cancelJob} onRetry={retryJob}/></section><section className="panel quick-panel"><div className="panel-heading"><div><h2>Quick actions</h2><p>Launch a supported task type</p></div></div><button className="quick-action" onClick={()=>{setJobType('GENERATE_REPORT');setTabSafe('create')}}><span className="quick-icon"><Layers3 size={17}/></span><span><b>Generate report</b><small>Creates an illustrative sales CSV</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={()=>{setJobType('SIMULATE_FAILURE');setTabSafe('create')}}><span className="quick-icon"><RefreshCw size={17}/></span><span><b>Test automatic retries</b><small>Simulate transient failures</small></span><ArrowRight size={15}/></button><button className="quick-action" onClick={()=>{setJobType('FETCH_RSS_FEED');setFeedUrl('https://www.nasa.gov/feed/');setTabSafe('create')}}><span className="quick-icon"><Rss size={17}/></span><span><b>Export an RSS feed</b><small>Fetch NASA or BBC feed articles as CSV</small></span><ArrowRight size={15}/></button><div className="info-callout"><ShieldCheck size={16}/><p>Reports are generated from labelled sample data in this starter. Connect a real business data source before using it for real reporting.</p></div></section></div></>}
+      {tab==='jobs'&&<section className="panel full-panel"><div className="panel-heading"><div><h2>All jobs</h2><p>Refreshes automatically every five seconds</p></div><button className="primary-small" onClick={()=>setTabSafe('create')}><Plus size={14}/> Create job</button></div><div className="table-toolbar"><div className="search-input"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search by ID, type or status"/></div><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="ALL">All statuses</option>{['QUEUED','RUNNING','RETRY_WAIT','SCHEDULED','SUCCEEDED','DEAD','CANCELLED'].map(s=><option key={s} value={s}>{s}</option>)}</select></div><JobTable jobs={filteredJobs} onDownload={downloadResult} onCancel={cancelJob} onRetry={retryJob}/></section>}
+      {tab==='create'&&<div className="form-layout"><section className="panel create-panel"><div className="panel-heading"><div><h2>Configure your job</h2><p>Select a supported handler and execution policy.</p></div></div><form onSubmit={createJob} className="create-job-form">
+          <label>
+            Job type
+            <select value={jobType} onChange={e => setJobType(e.target.value as typeof jobType)}>
+              <option value="GENERATE_REPORT">Generate sales report</option>
+              <option value="SIMULATE_FAILURE">Failure Lab — simulate transient errors</option>
+              <option value="FETCH_RSS_FEED">Fetch RSS feed → CSV</option>
+            </select>
+          </label>
+
+          {jobType === 'GENERATE_REPORT' ? (
+            <label>
+              Report period
+              <select value={lookbackDays} onChange={e => setLookbackDays(Number(e.target.value))}>
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+            </label>
+          ) : jobType === 'FETCH_RSS_FEED' ? (
+            <label>
+              RSS feed URL
+              <input
+                type="url"
+                value={feedUrl}
+                onChange={e => setFeedUrl(e.target.value)}
+                placeholder="https://www.nasa.gov/feed/"
+                pattern="https://.*"
+                required
+              />
+              <small className="field-help">
+                Use HTTPS. Allowed hosts: www.nasa.gov and feeds.bbci.co.uk.
+              </small>
+            </label>
+          ) : (
+            <label>
+              Number of attempts to fail
+              <input
+                type="number"
+                min={0}
+                max={8}
+                value={failFirstAttempts}
+                onChange={e => setFailFirstAttempts(Number(e.target.value))}
+              />
+              <small className="field-help">
+                Set lower than max attempts to observe automatic recovery.
+              </small>
+            </label>
+          )}<div className="two-fields"><label>Priority<select value={priority} onChange={e=>setPriority(e.target.value)}><option>LOW</option><option>NORMAL</option><option>HIGH</option></select></label><label>Maximum attempts<input type="number" min={1} max={10} value={maxAttempts} onChange={e=>setMaxAttempts(Number(e.target.value))}/></label></div><label>Schedule<select value={scheduleMode} onChange={e=>setScheduleMode(e.target.value)}><option value="NOW">Run as soon as possible</option><option value="LATER">Schedule for later</option></select></label>{scheduleMode==='LATER'&&<label>Run at<input type="datetime-local" value={runAt} onChange={e=>setRunAt(e.target.value)} required/></label>}<div className="form-note"><Clock3 size={16}/><span>ForgeFlow stores the job, publishes it to RabbitMQ, and executes it in a Java worker. Eligible failures are retried automatically.</span></div><button className="continue-button submit-job" type="submit" disabled={busy}>{busy?<><LoaderCircle size={16} className="spin"/> Submitting...</>:<>Submit job <ArrowRight size={15}/></>}</button></form></section><aside className="panel job-preview"><div className="panel-heading"><div><h2>Execution preview</h2><p>What ForgeFlow will do</p></div></div><div className="preview-step"><span>01</span><div><b>Persist job</b><small>Job Service writes the job record to PostgreSQL.</small></div></div><div className="preview-step"><span>02</span><div><b>Queue work</b><small>Outbox publisher sends the job ID through RabbitMQ.</small></div></div><div className="preview-step"><span>03</span><div><b>Execute and retry</b><small>Worker runs the handler and reports success or failure.</small></div></div><div className="preview-step"><span>04</span><div><b>Record outcome</b><small>Dashboard shows status, attempt history and report link.</small></div></div></aside></div>}
       {tab==='workers'&&<section className="panel full-panel"><div className="panel-heading"><div><h2>Worker registry</h2><p>Worker heartbeats are reported to the Job Service every five seconds.</p></div><button className="icon-action" onClick={()=>void loadWorkers()}><RefreshCw size={15}/></button></div>{adminError&&<div className="notice-banner error"><AlertTriangle size={17}/><div><strong>Worker details unavailable</strong><span>{adminError}. In secured mode, this endpoint requires an administrator role claim.</span></div></div>}{workers.length===0?<EmptyState title="No worker heartbeat received yet" body="Start the Worker Service with Docker Compose, then refresh this view."/>:<div className="worker-grid">{workers.map(w=><article className="worker-card" key={w.workerId}><div className="worker-card-top"><span className="quick-icon"><Cpu size={18}/></span><span className={w.healthy?'health-good':'health-bad'}>{w.healthy?'Healthy':'Stale'}</span></div><b>{w.workerId}</b><p>{w.activeJobs} active jobs</p><small>Last heartbeat: {new Date(w.lastSeen).toLocaleString()}</small></article>)}</div>}</section>}
       {tab==='failure'&&<section className="panel full-panel failure-panel"><div className="panel-heading"><div><h2>Failure Lab</h2><p>Run controlled test jobs to prove that the retry system works.</p></div><span className="dev-pill">TEST ONLY</span></div><div className="failure-explainer"><div className="quick-icon large"><RefreshCw size={21}/></div><div><h3>Make a job fail, then recover</h3><p>Create a simulated task configured to fail its first two attempts. ForgeFlow should record each failed attempt, schedule retries, and finish successfully once the configured failure count is passed.</p></div></div><button className="primary-small" onClick={()=>{setJobType('SIMULATE_FAILURE');setFailFirstAttempts(2);setMaxAttempts(3);setTabSafe('create')}}><Plus size={15}/> Configure Failure Lab job</button><p className="field-help">This handler intentionally throws an error for testing; it does not call external services.</p></section>}
       <footer className="dashboard-footer"><span>FORGEFLOW CLOUD · STARTER</span><span>Java · Spring Boot · RabbitMQ · PostgreSQL · Docker · Kubernetes</span></footer>
@@ -297,8 +359,8 @@ function Dashboard({ getToken, onSignOut, localPreview = false }: { getToken?: (
 }
 
 function JobTable({ jobs, onDownload, onCancel, onRetry }: { jobs: Job[]; onDownload: (job: Job) => void; onCancel: (id: string) => void; onRetry: (id: string) => void }) {
-  if(!jobs.length) return <EmptyState title="No jobs yet" body="Create a report or a Failure Lab task to see real execution records here." />
-  return <div className="table-wrap"><table className="jobs-table"><thead><tr><th>Job</th><th>Status</th><th>Attempts</th><th>Created</th><th>Actions</th></tr></thead><tbody>{jobs.map(job=><tr key={job.id}><td><div className="job-primary"><span className="job-mini-icon">{job.type==='GENERATE_REPORT'?<Layers3 size={15}/>:<RefreshCw size={15}/>}</span><div><b>{job.type==='GENERATE_REPORT'?'Sales report':'Failure Lab'}</b><small>{job.id}</small></div></div></td><td><JobStatus status={job.status}/></td><td>{job.attempts} / {job.maxAttempts}</td><td>{new Date(job.createdAt).toLocaleString()}</td><td><div className="job-actions">{job.status==='SUCCEEDED'&&job.result?.fileName&&<button title="Download result" onClick={()=>onDownload(job)}><Download size={15}/></button>}{['QUEUED','SCHEDULED','RETRY_WAIT'].includes(job.status)&&<button title="Cancel job" onClick={()=>onCancel(job.id)}><X size={15}/></button>}{job.status==='DEAD'&&<button title="Retry job (admin)" onClick={()=>onRetry(job.id)}><RefreshCw size={15}/></button>}</div></td></tr>)}</tbody></table></div>
+  if(!jobs.length) return <EmptyState title="No jobs yet" body="Create a report, RSS feed export, or Failure Lab task to see execution records here." />
+  return <div className="table-wrap"><table className="jobs-table"><thead><tr><th>Job</th><th>Status</th><th>Attempts</th><th>Created</th><th>Actions</th></tr></thead><tbody>{jobs.map(job=><tr key={job.id}><td><div className="job-primary"><span className="job-mini-icon">{job.type === 'GENERATE_REPORT' ? <Layers3 size={15}/> : job.type === 'FETCH_RSS_FEED' ? <Rss size={15}/> : <RefreshCw size={15}/> }</span><div><b>{job.type === 'GENERATE_REPORT' ? 'Sales report' : job.type === 'FETCH_RSS_FEED' ? 'RSS feed export' : 'Failure Lab'}</b><small>{job.id}</small></div></div></td><td><JobStatus status={job.status}/></td><td>{job.attempts} / {job.maxAttempts}</td><td>{new Date(job.createdAt).toLocaleString()}</td><td><div className="job-actions">{job.status==='SUCCEEDED'&&job.result?.fileName&&<button title="Download result" onClick={()=>onDownload(job)}><Download size={15}/></button>}{['QUEUED','SCHEDULED','RETRY_WAIT'].includes(job.status)&&<button title="Cancel job" onClick={()=>onCancel(job.id)}><X size={15}/></button>}{job.status==='DEAD'&&<button title="Retry job (admin)" onClick={()=>onRetry(job.id)}><RefreshCw size={15}/></button>}</div></td></tr>)}</tbody></table></div>
 }
 function JobStatus({status}:{status:string}) {const cls=status==='SUCCEEDED'?'status-success':['DEAD','CANCELLED'].includes(status)?'status-danger':['RUNNING','QUEUED'].includes(status)?'status-info':'status-warn';return <span className={`job-status ${cls}`}><span/>{status.replace('_',' ')}</span>}
 function EmptyState({title,body}:{title:string;body:string}) {return <div className="empty-state"><span><ListTodo size={20}/></span><b>{title}</b><p>{body}</p></div>}

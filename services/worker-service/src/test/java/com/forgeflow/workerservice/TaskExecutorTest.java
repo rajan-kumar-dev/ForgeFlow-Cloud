@@ -37,4 +37,43 @@ class TaskExecutorTest {
         JsonNode result = executor.execute(job);
         assertEquals(3, result.path("attempts").asInt());
     }
+    @Test
+    void rssFeedRejectsHttpUrl() {
+        TaskExecutor executor =
+            new TaskExecutor(new ObjectMapper(), tempDir.toString());
+
+        ExecutionJob job = new ExecutionJob(
+            "test-rss-http",
+            "FETCH_RSS_FEED",
+            "{\"feedUrl\":\"http://www.nasa.gov/feed/\"}",
+            1,
+            3,
+            "NORMAL"
+        );
+
+        assertThrows(
+            RuntimeException.class,
+            () -> executor.execute(job)
+        );
+    }
+
+    @Test
+    void rssFeedRejectsHostOutsideAllowlist() {
+        TaskExecutor executor =
+            new TaskExecutor(new ObjectMapper(), tempDir.toString());
+
+        ExecutionJob job = new ExecutionJob(
+            "test-rss-host",
+            "FETCH_RSS_FEED",
+            "{\"feedUrl\":\"https://example.com/feed.xml\"}",
+            1,
+            3,
+            "NORMAL"
+        );
+
+        assertThrows(
+            RuntimeException.class,
+            () -> executor.execute(job)
+        );
+    }
 }
