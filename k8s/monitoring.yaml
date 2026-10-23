@@ -1,3 +1,4 @@
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,19 +12,31 @@ data:
       - job_name: job-service
         metrics_path: /actuator/prometheus
         static_configs:
-          - targets: ['job-service:8081']
+          - targets: ["job-service:8081"]
       - job_name: worker-service
         metrics_path: /actuator/prometheus
         static_configs:
-          - targets: ['worker-service:8082']
+          - targets: ["worker-service:8082"]
       - job_name: scheduler-service
         metrics_path: /actuator/prometheus
         static_configs:
-          - targets: ['scheduler-service:8083']
+          - targets: ["scheduler-service:8083"]
       - job_name: api-gateway
         metrics_path: /actuator/prometheus
         static_configs:
-          - targets: ['api-gateway:8080']
+          - targets: ["api-gateway:8080"]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: forgeflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -33,24 +46,53 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: prometheus }
+    matchLabels:
+      app: prometheus
   template:
-    metadata: { labels: { app: prometheus } }
+    metadata:
+      labels:
+        app: prometheus
     spec:
       containers:
         - name: prometheus
           image: prom/prometheus:v2.55.1
-          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
-          ports: [{ containerPort: 9090 }]
-          volumeMounts: [{ name: config, mountPath: /etc/prometheus }]
-      volumes: [{ name: config, configMap: { name: forgeflow-prometheus-config } }]
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=7d"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: prometheus-data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: forgeflow-prometheus-config
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-data
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: prometheus, namespace: forgeflow }
+metadata:
+  name: prometheus
+  namespace: forgeflow
 spec:
-  selector: { app: prometheus }
-  ports: [{ port: 9090, targetPort: 9090 }]
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -69,6 +111,37 @@ data:
         isDefault: true
         editable: false
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgeflow-grafana-dashboard-provider
+  namespace: forgeflow
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: ForgeFlow
+        orgId: 1
+        folder: ForgeFlow
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /etc/grafana/dashboards
+          foldersFromFilesStructure: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: forgeflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,27 +150,68 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: grafana }
+    matchLabels:
+      app: grafana
   template:
-    metadata: { labels: { app: grafana } }
+    metadata:
+      labels:
+        app: grafana
     spec:
       containers:
         - name: grafana
           image: grafana/grafana:11.4.0
-          ports: [{ containerPort: 3000 }]
-          volumeMounts:
-            - { name: datasource-config, mountPath: /etc/grafana/provisioning/datasources }
+          ports:
+            - containerPort: 3000
           env:
-            - { name: GF_SECURITY_ADMIN_USER, value: "admin" }
-            - { name: GF_SECURITY_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: forgeflow-secrets, key: GRAFANA_PASSWORD } } }
-            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forgeflow-secrets
+                  key: GRAFANA_PASSWORD
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          volumeMounts:
+            - name: datasource-config
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: dashboard-files
+              mountPath: /etc/grafana/dashboards
+              readOnly: true
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
       volumes:
         - name: datasource-config
-          configMap: { name: forgeflow-grafana-datasource }
+          configMap:
+            name: forgeflow-grafana-datasource
+        - name: dashboard-provider
+          configMap:
+            name: forgeflow-grafana-dashboard-provider
+        - name: dashboard-files
+          configMap:
+            name: forgeflow-dashboard-json
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-data
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: grafana, namespace: forgeflow }
+metadata:
+  name: grafana
+  namespace: forgeflow
 spec:
-  selector: { app: grafana }
-  ports: [{ port: 3000, targetPort: 3000 }]
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
