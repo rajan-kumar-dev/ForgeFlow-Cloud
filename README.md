@@ -207,3 +207,79 @@ This is a working MVP architecture scaffold; harden it before presenting it as p
 5. Configure Clerk authentication + admin claim and test owner isolation.
 6. Benchmark job throughput/latency under documented workloads; report measurements from actual tests only.
 7. Deploy to a test Kubernetes cluster and add queue-depth metrics/scaling only after CPU-based scaling works.
+
+## AWS Deployment
+
+**Live demo:** [https://3.104.215.198](https://3.104.215.198)
+**Hosting:** AWS Lightsail · Ubuntu 22.04 LTS · 8 GB RAM · 2 vCPUs · 160 GB SSD
+**Region:** Asia Pacific (Sydney), `ap-southeast-2`
+**Deployment:** Docker Compose, host-level Nginx reverse proxy, Let's Encrypt IP-address TLS certificate
+
+### Live application
+
+![ForgeFlow Cloud deployed on AWS Lightsail](docs/screenshots/forgeflow-aws.png)
+
+### Cloud architecture
+
+```mermaid
+flowchart TB
+    Browser[Browser / user]
+    IP[Lightsail static IPv4\n3.104.215.198]
+    HostNginx[Host Nginx\nHTTP to HTTPS redirect\nTLS termination]
+    Frontend[Frontend container\nReact + Vite + Nginx\n127.0.0.1:3000 on host]
+    Gateway[API Gateway\nSpring Boot]
+    JobService[Job Service\nSpring Boot]
+    Scheduler[Scheduler Service\nSpring Boot]
+    RabbitMQ[(RabbitMQ)]
+    Worker[Worker Service\nSpring Boot]
+    Postgres[(PostgreSQL)]
+    Prometheus[Prometheus]
+    Grafana[Grafana]
+
+    Browser --> IP --> HostNginx --> Frontend
+    Frontend -->|/api/* over Docker network| Gateway
+    Gateway --> JobService
+    JobService -->|publish jobs| RabbitMQ
+    Scheduler -->|scheduled work| JobService
+    RabbitMQ -->|consume jobs| Worker
+    JobService --> Postgres
+    Gateway -. metrics .-> Prometheus
+    JobService -. metrics .-> Prometheus
+    Worker -. metrics .-> Prometheus
+    Scheduler -. metrics .-> Prometheus
+    Grafana -. queries .-> Prometheus
+```
+
+### Deployment steps
+
+1. **Provision the VM.** Create an Ubuntu 22.04 LTS Lightsail instance and attach a static IPv4 address.
+2. **Restrict inbound traffic.** Allow public TCP ports `80` (HTTP) and `443` (HTTPS). Restrict SSH (`22`) to an administrator's IP address and/or the Lightsail browser SSH client. Keep database, message-broker, backend and monitoring ports private.
+3. **Install Docker Engine and Docker Compose.** Use Docker's official Ubuntu repository.
+4. **Get the source.** Clone this repository onto the instance and check out the intended deployment commit.
+5. **Create server-only configuration.** Create `.env` on the server with strong unique passwords/tokens and the required Clerk settings. Set permissions with `chmod 600 .env`. Never commit `.env` or put real secrets in this README.
+6. **Validate Compose configuration.** Run `docker compose config --quiet` before starting services.
+7. **Build and start the stack.** Run `sudo docker compose up --build -d`, then inspect service health with `sudo docker compose ps` and logs with `sudo docker compose logs --tail=100`.
+8. **Publish the frontend through Nginx.** The host Nginx proxy serves public traffic on ports `80`/`443` and forwards it to the frontend container bound to `127.0.0.1:3000`. The frontend's container Nginx proxies `/api/` to the API gateway over the Docker network.
+9. **Enable HTTPS.** Certbot obtains a Let's Encrypt short-lived certificate for the static IP through the ACME HTTP webroot challenge. HTTP requests redirect to HTTPS.
+10. **Automate renewal.** The IP-address certificate is valid for 160 hours (a little over six days). Keep the Certbot renewal timer enabled and use a deploy hook to reload Nginx after successful renewal. Test renewal with `sudo certbot renew --dry-run`.
+11. **Smoke-test the deployment.** Confirm the site loads over HTTPS, HTTP redirects to HTTPS, jobs can be submitted and completed, and RSS feed jobs generate downloadable CSVs.
+
+### Operational and security notes
+
+- Only the web entry point should be publicly reachable. PostgreSQL, RabbitMQ, Spring Boot services, Prometheus and Grafana should not be exposed directly to the public internet.
+- The Compose file binds the frontend to host loopback (`127.0.0.1:3000`); host Nginx is the public entry point.
+- Keep `.env` on the server, outside version control. Use `.env.example` for placeholder documentation only.
+- The deployment currently uses an IP-address certificate rather than a custom domain. IP certificates use Let's Encrypt's `shortlived` profile and require dependable automated renewal. See [Let's Encrypt's IP and short-lived certificate announcement](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability) and the [Certbot renewal-hook documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates).
+- Lightsail resources have ongoing charges. Check the current [Lightsail pricing](https://aws.amazon.com/lightsail/pricing/) and delete resources you no longer need.
+
+### Useful production checks
+
+```bash
+# Run from the ForgeFlow repository directory on the Lightsail instance
+sudo docker compose ps
+sudo docker compose logs --tail=100
+sudo nginx -t
+curl -I https://3.104.215.198
+curl -I http://3.104.215.198
+sudo certbot renew --dry-run
+```
